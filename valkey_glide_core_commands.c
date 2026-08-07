@@ -188,6 +188,30 @@ uint8_t* create_connection_request(size_t*                                   len
     /* Set client name */
     conn_req.client_name = config->client_name ? config->client_name : NULL;
 
+    /* Set lib_name: compose from lib_name override and/or client_info_tag */
+    char* composed_lib_name = NULL;
+    if (config->lib_name && config->client_info_tag) {
+        /* lib_name + (tag) */
+        size_t composed_len =
+            strlen(config->lib_name) + 1 + strlen(config->client_info_tag) + 1 + 1;
+        composed_lib_name = emalloc(composed_len);
+        snprintf(
+            composed_lib_name, composed_len, "%s(%s)", config->lib_name, config->client_info_tag);
+        conn_req.lib_name = composed_lib_name;
+    } else if (config->lib_name) {
+        /* Full override, no tag */
+        conn_req.lib_name = config->lib_name;
+    } else if (config->client_info_tag) {
+        /* Default lib name (GlidePHP) + (tag) — Rust core sets default,
+           but if tag is provided we must compose here with the known default */
+        size_t composed_len = strlen("GlidePHP") + 1 + strlen(config->client_info_tag) + 1 + 1;
+        composed_lib_name   = emalloc(composed_len);
+        snprintf(composed_lib_name, composed_len, "GlidePHP(%s)", config->client_info_tag);
+        conn_req.lib_name = composed_lib_name;
+    } else {
+        conn_req.lib_name = NULL;
+    }
+
     /* Set client AZ */
     if (config->client_az) {
         conn_req.client_az = config->client_az;
@@ -249,12 +273,20 @@ uint8_t* create_connection_request(size_t*                                   len
     /* Allocate memory for the serialized message */
     uint8_t* buffer = (uint8_t*) emalloc(*len);
     if (!buffer) {
+        if (composed_lib_name) {
+            efree(composed_lib_name);
+        }
         *len = 0;
         return NULL;
     }
 
     /* Serialize the message */
     connection_request__connection_request__pack(&conn_req, buffer);
+
+    /* Free temporary composed lib_name if we allocated it */
+    if (composed_lib_name) {
+        efree(composed_lib_name);
+    }
 
     return buffer;
 }

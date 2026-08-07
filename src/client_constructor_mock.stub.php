@@ -118,6 +118,8 @@ class ClientConstructorMock
         ?array $compression = null,
         ?array $client_side_cache = null,
         ?callable $address_resolver = null,
+        ?string $lib_name = null,
+        ?string $client_info_tag = null,
     ): \Connection_request\ConnectionRequest;
 
     /**
@@ -164,5 +166,7 @@ class ClientConstructorMock
         ?array $compression = null,
         ?array $client_side_cache = null,
         ?callable $address_resolver = null,
+        ?string $lib_name = null,
+        ?string $client_info_tag = null,
     ): \Connection_request\ConnectionRequest;
 }

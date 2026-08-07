@@ -729,6 +729,71 @@ class ConnectionRequestTest extends \TestSuite
         $this->assertFalse($compression_config->getEnabled());
     }
 
+    // ---- lib_name and client_info_tag tests ----
+
+    public function testStandaloneLibNameOverride()
+    {
+        $request = ClientConstructorMock::simulate_standalone_constructor(lib_name: 'custom-lib');
+        $this->assertEquals('custom-lib', $request->getLibName());
+    }
+
+    public function testClusterLibNameOverride()
+    {
+        $request = ClientConstructorMock::simulate_cluster_constructor(lib_name: 'custom-lib');
+        $this->assertEquals('custom-lib', $request->getLibName());
+    }
+
+    public function testStandaloneClientInfoTag()
+    {
+        $request = ClientConstructorMock::simulate_standalone_constructor(client_info_tag: 'my-framework:1.0');
+        $this->assertEquals('GlidePHP(my-framework:1.0)', $request->getLibName());
+    }
+
+    public function testClusterClientInfoTag()
+    {
+        $request = ClientConstructorMock::simulate_cluster_constructor(client_info_tag: 'my-framework:1.0');
+        $this->assertEquals('GlidePHP(my-framework:1.0)', $request->getLibName());
+    }
+
+    public function testStandaloneLibNameWithTag()
+    {
+        $request = ClientConstructorMock::simulate_standalone_constructor(lib_name: 'custom', client_info_tag: 'tag:2.0');
+        $this->assertEquals('custom(tag:2.0)', $request->getLibName());
+    }
+
+    public function testClusterLibNameWithTag()
+    {
+        $request = ClientConstructorMock::simulate_cluster_constructor(lib_name: 'custom', client_info_tag: 'tag:2.0');
+        $this->assertEquals('custom(tag:2.0)', $request->getLibName());
+    }
+
+    public function testStandaloneLibNameDefault()
+    {
+        $request = ClientConstructorMock::simulate_standalone_constructor();
+        // When neither is set, lib_name should be empty (Rust core sets default)
+        $this->assertEquals('', $request->getLibName());
+    }
+
+    public function testStandaloneClientInfoTagWhitespaceRejected()
+    {
+        try {
+            ClientConstructorMock::simulate_standalone_constructor(client_info_tag: 'has space');
+            $this->assertTrue(false, 'Expected ValkeyGlideException was not thrown');
+        } catch (ValkeyGlideException $e) {
+            $this->assertStringContains('client_info_tag must not contain whitespace', $e->getMessage());
+        }
+    }
+
+    public function testClusterClientInfoTagWhitespaceRejected()
+    {
+        try {
+            ClientConstructorMock::simulate_cluster_constructor(client_info_tag: "has\ttab");
+            $this->assertTrue(false, 'Expected ValkeyGlideException was not thrown');
+        } catch (ValkeyGlideException $e) {
+            $this->assertStringContains('client_info_tag must not contain whitespace', $e->getMessage());
+        }
+    }
+
     // Helper methods
     // --------------
 

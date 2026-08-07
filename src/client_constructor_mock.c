@@ -92,7 +92,7 @@ PHP_METHOD(ClientConstructorMock, simulate_standalone_constructor) {
     valkey_glide_php_common_constructor_params_t common_params;
     valkey_glide_init_common_constructor_params(&common_params);
 
-    ZEND_PARSE_PARAMETERS_START(0, 15)
+    ZEND_PARSE_PARAMETERS_START(0, 17)
     Z_PARAM_OPTIONAL
     Z_PARAM_ARRAY_OR_NULL(common_params.addresses)
     Z_PARAM_BOOL(common_params.use_tls)
@@ -110,6 +110,8 @@ PHP_METHOD(ClientConstructorMock, simulate_standalone_constructor) {
     Z_PARAM_ARRAY_OR_NULL(common_params.compression)
     Z_PARAM_ARRAY_OR_NULL(common_params.client_side_cache)
     Z_PARAM_ZVAL_OR_NULL(common_params.address_resolver)
+    Z_PARAM_STRING_OR_NULL(common_params.lib_name, common_params.lib_name_len)
+    Z_PARAM_STRING_OR_NULL(common_params.client_info_tag, common_params.client_info_tag_len)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_THROWS());
 
     /* Validate database_id range before setting */
@@ -120,6 +122,21 @@ PHP_METHOD(ClientConstructorMock, simulate_standalone_constructor) {
         return;
     }
 
+
+    /* Validate client_info_tag contains no whitespace */
+    if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {
+        for (size_t i = 0; i < common_params.client_info_tag_len; i++) {
+            if (common_params.client_info_tag[i] == ' ' ||
+                common_params.client_info_tag[i] == '\t' ||
+                common_params.client_info_tag[i] == '\n' ||
+                common_params.client_info_tag[i] == '\r') {
+                const char* error_message = "client_info_tag must not contain whitespace";
+                VALKEY_LOG_ERROR("mock_construct", error_message);
+                zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
+                return;
+            }
+        }
+    }
     bool addresses_allocated = _populate_addresses(&common_params.addresses);
 
     /* Build client configuration from individual parameters */
@@ -159,7 +176,7 @@ PHP_METHOD(ClientConstructorMock, simulate_cluster_constructor) {
     valkey_glide_php_common_constructor_params_t common_params;
     valkey_glide_init_common_constructor_params(&common_params);
 
-    ZEND_PARSE_PARAMETERS_START(0, 16)
+    ZEND_PARSE_PARAMETERS_START(0, 18)
     Z_PARAM_OPTIONAL
     Z_PARAM_ARRAY_OR_NULL(common_params.addresses)
     Z_PARAM_BOOL(common_params.use_tls)
@@ -178,6 +195,8 @@ PHP_METHOD(ClientConstructorMock, simulate_cluster_constructor) {
     Z_PARAM_ARRAY_OR_NULL(common_params.compression)
     Z_PARAM_ARRAY_OR_NULL(common_params.client_side_cache)
     Z_PARAM_ZVAL_OR_NULL(common_params.address_resolver)
+    Z_PARAM_STRING_OR_NULL(common_params.lib_name, common_params.lib_name_len)
+    Z_PARAM_STRING_OR_NULL(common_params.client_info_tag, common_params.client_info_tag_len)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_THROWS());
 
     /* Validate database_id range before setting */
@@ -188,6 +207,21 @@ PHP_METHOD(ClientConstructorMock, simulate_cluster_constructor) {
         return;
     }
 
+
+    /* Validate client_info_tag contains no whitespace */
+    if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {
+        for (size_t i = 0; i < common_params.client_info_tag_len; i++) {
+            if (common_params.client_info_tag[i] == ' ' ||
+                common_params.client_info_tag[i] == '\t' ||
+                common_params.client_info_tag[i] == '\n' ||
+                common_params.client_info_tag[i] == '\r') {
+                const char* error_message = "client_info_tag must not contain whitespace";
+                VALKEY_LOG_ERROR("mock_construct", error_message);
+                zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
+                return;
+            }
+        }
+    }
     bool addresses_allocated = _populate_addresses(&common_params.addresses);
 
     /* Build cluster client configuration from individual parameters */

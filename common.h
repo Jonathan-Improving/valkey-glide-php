@@ -184,6 +184,8 @@ typedef struct {
     valkey_glide_backoff_strategy_t*                   reconnect_strategy; /* NULL if not set */
     char*                                              client_name;        /* NULL if not set */
     char*                                              client_az;          /* NULL if not set */
+    char*                                              lib_name;           /* NULL if not set */
+    char*                                              client_info_tag;    /* NULL if not set */
     valkey_glide_advanced_base_client_configuration_t* advanced_config;    /* NULL if not set */
     valkey_glide_compression_config_t*                 compression_config; /* NULL if not set */
     valkey_glide_client_side_cache_config_t*           client_side_cache;  /* NULL if not set */
@@ -224,8 +226,12 @@ typedef struct {
     zval*     client_side_cache; /* Client-side cache configuration */
     char*     client_name;
     char*     client_az;
+    char*     lib_name;
+    char*     client_info_tag;
     size_t    client_name_len;
     size_t    client_az_len;
+    size_t    lib_name_len;
+    size_t    client_info_tag_len;
     zend_long read_from; /* PRIMARY by default */
     zend_long request_timeout;
     zend_long database_id;

@@ -176,6 +176,10 @@ PHP_METHOD(ValkeyGlideCluster, __construct) {
     zend_bool periodic_checks_is_null = 1;
     char*     client_az               = NULL;
     size_t    client_az_len           = 0;
+    char*     lib_name                = NULL;
+    size_t    lib_name_len            = 0;
+    char*     client_info_tag         = NULL;
+    size_t    client_info_tag_len     = 0;
     zval*     advanced_config         = NULL;
     zend_bool lazy_connect            = 0;
     zend_bool lazy_connect_is_null    = 1;
@@ -189,7 +193,7 @@ PHP_METHOD(ValkeyGlideCluster, __construct) {
     valkey_glide_init_common_constructor_params(&common_params);
     valkey_glide_object* valkey_glide;
 
-    ZEND_PARSE_PARAMETERS_START(0, 22)
+    ZEND_PARSE_PARAMETERS_START(0, 24)
     Z_PARAM_OPTIONAL
     Z_PARAM_STRING_OR_NULL(name, name_len)
     Z_PARAM_ARRAY_OR_NULL(seeds)
@@ -213,6 +217,8 @@ PHP_METHOD(ValkeyGlideCluster, __construct) {
     Z_PARAM_ARRAY_OR_NULL(compression)
     Z_PARAM_ARRAY_OR_NULL(client_side_cache)
     Z_PARAM_ZVAL_OR_NULL(address_resolver)
+    Z_PARAM_STRING_OR_NULL(lib_name, lib_name_len)
+    Z_PARAM_STRING_OR_NULL(client_info_tag, client_info_tag_len)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_THROWS());
 
     valkey_glide = VALKEY_GLIDE_PHP_ZVAL_GET_OBJECT(valkey_glide_object, getThis());
@@ -253,6 +259,19 @@ PHP_METHOD(ValkeyGlideCluster, __construct) {
         common_params.context = phpredis_context;
     }
 
+    /* Validate client_info_tag contains no whitespace */
+    if (client_info_tag != NULL && client_info_tag_len > 0) {
+        for (size_t i = 0; i < client_info_tag_len; i++) {
+            if (client_info_tag[i] == ' ' || client_info_tag[i] == '\t' ||
+                client_info_tag[i] == '\n' || client_info_tag[i] == '\r') {
+                zend_throw_exception(get_valkey_glide_exception_ce(),
+                                     "client_info_tag must not contain whitespace",
+                                     0);
+                return;
+            }
+        }
+    }
+
     /* Populate common_params */
     common_params.addresses               = addresses;
     common_params.use_tls                 = use_tls;
@@ -265,6 +284,10 @@ PHP_METHOD(ValkeyGlideCluster, __construct) {
     common_params.client_name_len         = client_name_len;
     common_params.client_az               = client_az;
     common_params.client_az_len           = client_az_len;
+    common_params.lib_name                = lib_name;
+    common_params.lib_name_len            = lib_name_len;
+    common_params.client_info_tag         = client_info_tag;
+    common_params.client_info_tag_len     = client_info_tag_len;
     common_params.advanced_config         = advanced_config;
     common_params.lazy_connect            = lazy_connect;
     common_params.lazy_connect_is_null    = lazy_connect_is_null;

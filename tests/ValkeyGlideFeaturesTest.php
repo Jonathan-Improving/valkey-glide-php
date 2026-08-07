@@ -47,6 +47,65 @@ class ValkeyGlideFeaturesTest extends ValkeyGlideBaseTest
         $this->assertTrue(str_contains($info_str, "lib-ver=" . $expected_version));
     }
 
+    public function testClientInfoTagAppendsToLibName()
+    {
+        $addresses = [['host' => $this->getHost(), 'port' => $this->getPort()]];
+        $client = new ValkeyGlide();
+        $connectParams = ['addresses' => $addresses, 'client_info_tag' => 'my-framework:1.0'];
+        if ($this->getTLS()) {
+            $connectParams['use_tls'] = true;
+            $connectParams['advanced_config'] = ['tls_config' => ['use_insecure_tls' => true]];
+        }
+        $client->connect(...$connectParams);
+        $info_str = $client->rawcommand("CLIENT", "INFO");
+        $this->assertIsString($info_str);
+        $this->assertTrue(str_contains($info_str, "lib-name=GlidePHP(my-framework:1.0)"));
+        $client->close();
+    }
+
+    public function testLibNameOverride()
+    {
+        $addresses = [['host' => $this->getHost(), 'port' => $this->getPort()]];
+        $client = new ValkeyGlide();
+        $connectParams = ['addresses' => $addresses, 'lib_name' => 'custom-lib'];
+        if ($this->getTLS()) {
+            $connectParams['use_tls'] = true;
+            $connectParams['advanced_config'] = ['tls_config' => ['use_insecure_tls' => true]];
+        }
+        $client->connect(...$connectParams);
+        $info_str = $client->rawcommand("CLIENT", "INFO");
+        $this->assertIsString($info_str);
+        $this->assertTrue(str_contains($info_str, "lib-name=custom-lib"));
+        $client->close();
+    }
+
+    public function testLibNameWithClientInfoTag()
+    {
+        $addresses = [['host' => $this->getHost(), 'port' => $this->getPort()]];
+        $client = new ValkeyGlide();
+        $connectParams = ['addresses' => $addresses, 'lib_name' => 'custom', 'client_info_tag' => 'tag:2.0'];
+        if ($this->getTLS()) {
+            $connectParams['use_tls'] = true;
+            $connectParams['advanced_config'] = ['tls_config' => ['use_insecure_tls' => true]];
+        }
+        $client->connect(...$connectParams);
+        $info_str = $client->rawcommand("CLIENT", "INFO");
+        $this->assertIsString($info_str);
+        $this->assertTrue(str_contains($info_str, "lib-name=custom(tag:2.0)"));
+        $client->close();
+    }
+
+    public function testClientInfoTagWhitespaceRejected()
+    {
+        $client = new ValkeyGlide();
+        try {
+            $client->connect(addresses: [['host' => $this->getHost(), 'port' => $this->getPort()]], client_info_tag: 'has space');
+            $this->assertTrue(false, 'Expected ValkeyGlideException was not thrown');
+        } catch (ValkeyGlideException $e) {
+            $this->assertStringContains('client_info_tag must not contain whitespace', $e->getMessage());
+        }
+    }
+
     public function testConstructorWithSingleAddress()
     {
         // Test constructor with single address in proper array format

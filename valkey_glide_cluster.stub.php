@@ -252,6 +252,9 @@ class ValkeyGlideCluster
      * @param array|null $client_side_cache     Client-side cache configuration array from ClientSideCache::toArray():
      *                                          ['cache_id' => string, 'max_cache_kb' => int, 'entry_ttl_ms' => int,
      *                                          'eviction_policy' => ?int, 'enable_metrics' => bool]
+     * @param callable|null $address_resolver   Custom address resolver callback
+     * @param string|null $lib_name             Override the library name sent via CLIENT SETINFO LIB-NAME (default: "GlidePHP")
+     * @param string|null $client_info_tag      Tag appended to lib-name as "GlidePHP(tag)" for framework attribution. Must not contain whitespace.
      *
      * Note: Cannot mix PHPRedis-style and ValkeyGlide-style parameters.
      */
@@ -278,6 +281,8 @@ class ValkeyGlideCluster
         ?array $compression = null,
         ?array $client_side_cache = null,
         ?callable $address_resolver = null,
+        ?string $lib_name = null,
+        ?string $client_info_tag = null,
     ) {
     }
 

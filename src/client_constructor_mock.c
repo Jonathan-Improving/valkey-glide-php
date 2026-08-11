@@ -125,16 +125,11 @@ PHP_METHOD(ClientConstructorMock, simulate_standalone_constructor) {
 
     /* Validate client_info_tag contains no whitespace */
     if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {
-        for (size_t i = 0; i < common_params.client_info_tag_len; i++) {
-            if (common_params.client_info_tag[i] == ' ' ||
-                common_params.client_info_tag[i] == '\t' ||
-                common_params.client_info_tag[i] == '\n' ||
-                common_params.client_info_tag[i] == '\r') {
-                const char* error_message = "client_info_tag must not contain whitespace";
-                VALKEY_LOG_ERROR("mock_construct", error_message);
-                zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
-                return;
-            }
+        if (validate_client_info_tag(common_params.client_info_tag, common_params.client_info_tag_len) != 0) {
+            const char* error_message = "client_info_tag must not contain whitespace";
+            VALKEY_LOG_ERROR("mock_construct", error_message);
+            zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
+            return;
         }
     }
     bool addresses_allocated = _populate_addresses(&common_params.addresses);
@@ -210,16 +205,11 @@ PHP_METHOD(ClientConstructorMock, simulate_cluster_constructor) {
 
     /* Validate client_info_tag contains no whitespace */
     if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {
-        for (size_t i = 0; i < common_params.client_info_tag_len; i++) {
-            if (common_params.client_info_tag[i] == ' ' ||
-                common_params.client_info_tag[i] == '\t' ||
-                common_params.client_info_tag[i] == '\n' ||
-                common_params.client_info_tag[i] == '\r') {
-                const char* error_message = "client_info_tag must not contain whitespace";
-                VALKEY_LOG_ERROR("mock_construct", error_message);
-                zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
-                return;
-            }
+        if (validate_client_info_tag(common_params.client_info_tag, common_params.client_info_tag_len) != 0) {
+            const char* error_message = "client_info_tag must not contain whitespace";
+            VALKEY_LOG_ERROR("mock_construct", error_message);
+            zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
+            return;
         }
     }
     bool addresses_allocated = _populate_addresses(&common_params.addresses);

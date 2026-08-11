@@ -4,11 +4,25 @@
 #ifndef VALKEY_GLIDE_COMMON_H
 #define VALKEY_GLIDE_COMMON_H
 
+#include <ctype.h>
 #include <stdio.h>
 #include <zend_smart_str.h>
 
 #include "include/glide_bindings.h"
 #include "valkey_glide_address_resolver.h"
+
+/**
+ * Validate that a client_info_tag contains no whitespace characters.
+ * Returns 0 on success, -1 if whitespace is found.
+ */
+static inline int validate_client_info_tag(const char* tag, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        if (isspace((unsigned char)tag[i])) {
+            return -1;
+        }
+    }
+    return 0;
+}
 
 /* ValkeyGlidePHP version */
 #define VALKEY_GLIDE_PHP_VERSION "1.1.0"

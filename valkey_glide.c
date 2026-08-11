@@ -1084,14 +1084,11 @@ PHP_METHOD(ValkeyGlide, connect) {
 
     /* Validate client_info_tag contains no whitespace */
     if (client_info_tag != NULL && client_info_tag_len > 0) {
-        for (size_t i = 0; i < client_info_tag_len; i++) {
-            if (client_info_tag[i] == ' ' || client_info_tag[i] == '\t' ||
-                client_info_tag[i] == '\n' || client_info_tag[i] == '\r') {
-                zend_throw_exception(get_valkey_glide_exception_ce(),
-                                     "client_info_tag must not contain whitespace",
-                                     0);
-                RETURN_FALSE;
-            }
+        if (validate_client_info_tag(client_info_tag, client_info_tag_len) != 0) {
+            zend_throw_exception(get_valkey_glide_exception_ce(),
+                                 "client_info_tag must not contain whitespace",
+                                 0);
+            RETURN_FALSE;
         }
     }
 

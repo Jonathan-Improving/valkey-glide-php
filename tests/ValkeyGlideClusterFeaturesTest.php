@@ -44,6 +44,47 @@ class ValkeyGlideClusterFeaturesTest extends ValkeyGlideClusterBaseTest
         $this->assertTrue(str_contains($info_str, "lib-ver=" . $expected_version));
     }
 
+    public function testClientInfoTagAppendsToLibNameCluster()
+    {
+        // Verify that CLIENT INFO shows composed lib-name with tag for cluster client
+        $client = new ValkeyGlideCluster(
+            addresses: [['host' => $this->getHost(), 'port' => $this->getPort()]],
+            use_tls: false,
+            credentials: $this->getAuth(),
+            read_from: ValkeyGlide::READ_FROM_PRIMARY,
+            client_info_tag: 'my-framework:1.0'
+        );
+        $info_str = $client->rawcommand(
+            ['type' => 'primarySlotKey', 'key' => 'test'],
+            "CLIENT",
+            "INFO"
+        );
+        $this->assertIsString($info_str);
+        $this->assertTrue(str_contains($info_str, "lib-name=GlidePHP(my-framework:1.0)"));
+        $client->close();
+    }
+
+    public function testLibNameWithClientInfoTagCluster()
+    {
+        // Verify that CLIENT INFO shows composed lib-name with custom lib_name and tag for cluster client
+        $client = new ValkeyGlideCluster(
+            addresses: [['host' => $this->getHost(), 'port' => $this->getPort()]],
+            use_tls: false,
+            credentials: $this->getAuth(),
+            read_from: ValkeyGlide::READ_FROM_PRIMARY,
+            lib_name: 'custom',
+            client_info_tag: 'tag:2.0'
+        );
+        $info_str = $client->rawcommand(
+            ['type' => 'primarySlotKey', 'key' => 'test'],
+            "CLIENT",
+            "INFO"
+        );
+        $this->assertIsString($info_str);
+        $this->assertTrue(str_contains($info_str, "lib-name=custom(tag:2.0)"));
+        $client->close();
+    }
+
     // ==============================================
     // ADDRESSES PARAMETER TESTS
     // ==============================================

@@ -190,7 +190,8 @@ uint8_t* create_connection_request(size_t*                                   len
 
     /* Set lib_name: compose from lib_name override and/or client_info_tag */
     char* composed_lib_name = NULL;
-    if (config->lib_name && config->client_info_tag) {
+    if (config->lib_name && strlen(config->lib_name) > 0 && config->client_info_tag &&
+        strlen(config->client_info_tag) > 0) {
         /* lib_name + (tag) */
         size_t composed_len =
             strlen(config->lib_name) + 1 + strlen(config->client_info_tag) + 1 + 1;
@@ -198,10 +199,10 @@ uint8_t* create_connection_request(size_t*                                   len
         snprintf(
             composed_lib_name, composed_len, "%s(%s)", config->lib_name, config->client_info_tag);
         conn_req.lib_name = composed_lib_name;
-    } else if (config->lib_name) {
+    } else if (config->lib_name && strlen(config->lib_name) > 0) {
         /* Full override, no tag */
         conn_req.lib_name = config->lib_name;
-    } else if (config->client_info_tag) {
+    } else if (config->client_info_tag && strlen(config->client_info_tag) > 0) {
         /* Default lib name (GlidePHP) + (tag) — Rust core sets default,
            but if tag is provided we must compose here with the known default */
         size_t composed_len = strlen("GlidePHP") + 1 + strlen(config->client_info_tag) + 1 + 1;

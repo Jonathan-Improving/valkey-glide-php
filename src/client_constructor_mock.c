@@ -122,7 +122,6 @@ PHP_METHOD(ClientConstructorMock, simulate_standalone_constructor) {
         return;
     }
 
-
     /* Validate client_info_tag contains no whitespace */
     if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {
         if (validate_client_info_tag(common_params.client_info_tag, common_params.client_info_tag_len) != 0) {
@@ -201,7 +200,6 @@ PHP_METHOD(ClientConstructorMock, simulate_cluster_constructor) {
         zend_throw_exception(get_valkey_glide_exception_ce(), error_message, 0);
         return;
     }
-
 
     /* Validate client_info_tag contains no whitespace */
     if (common_params.client_info_tag != NULL && common_params.client_info_tag_len > 0) {

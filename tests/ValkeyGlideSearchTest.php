@@ -123,6 +123,389 @@ class ValkeyGlideSearchTest extends ValkeyGlideBaseTest
         }
     }
 
+    /**
+     * Capability probe for valkey-search 1.3.0 (PG-14 level fixture).
+     *
+     * Probes a real 1.3-only behaviour (FT.SEARCH INKEYS, rejected with
+     * "Unexpected argument `INKEYS`" by every pre-1.3 module build) on a
+     * throwaway index, rather than trusting MODULE LIST's version string
+     * alone -- the version number is unreliable across rc builds (see
+     * BUILD-MODULES-1.3.md's "never trust a version string alone" note
+     * in the main repo's planning tree). The probe index is cleaned up
+     * before returning in every case, including when the probe itself
+     * throws; a failed cleanup DROPINDEX retries once, then raises
+     * (the capability probe must never swallow a genuine failure).
+     */
+    protected function requiresSearch13(): bool
+    {
+        $idx = uniqid('phpcap_');
+        $this->getClient()->ftCreate(
+            (new FtCreateBuilder())
+                ->index($idx)
+                ->addField(new FtTextField('title'))
+        );
+        $capable = true;
+        try {
+            $this->getClient()->ftSearch(
+                (new FtSearchBuilder())
+                    ->index($idx)
+                    ->query('*')
+                    ->inKeys([])
+            );
+        } catch (\Throwable $e) {
+            if (stripos($e->getMessage(), 'inkeys') !== false) {
+                $capable = false;
+            } else {
+                $this->dropCapabilityProbeIndex($idx);
+                throw $e;
+            }
+        }
+        $this->dropCapabilityProbeIndex($idx);
+        return $capable;
+    }
+
+    /** @internal Drop the capability probe index, retrying once before raising. */
+    private function dropCapabilityProbeIndex(string $idx): void
+    {
+        try {
+            $this->getClient()->ftDropIndex($idx);
+        } catch (\Throwable $e) {
+            try {
+                $this->getClient()->ftDropIndex($idx);
+            } catch (\Throwable $e2) {
+                throw $e2;
+            }
+        }
+    }
+
+    /**
+     * Read the active `search.emulate-release` level from the server
+     * (PG-14 level fixture). Returns null if the config key doesn't
+     * exist (pre-1.3 module, where emulate-release has no meaning) or
+     * the reply can't be parsed. Callers that have already gated on
+     * `requiresSearch13()` and still get null back are looking at an
+     * unparseable reply from a module that IS 1.3-capable -- a bug in
+     * this fixture, not "pre-1.3" -- and should treat that as a hard
+     * failure rather than silently skipping (mirrors the Python port's
+     * R4-L-1 fix).
+     */
+    protected function emulateReleaseLevel(): ?string
+    {
+        try {
+            $config = $this->getClient()->config('GET', 'search.emulate-release');
+        } catch (\Throwable $e) {
+            return null;
+        }
+        if (!is_array($config)) {
+            return null;
+        }
+        // ValkeyGlide's CONFIG GET returns an associative array (map), not
+        // a flat [key, value] list (the same shape the Python port's
+        // _parse_emulate_release_level had to defend against).
+        foreach ($config as $key => $value) {
+            if (strcasecmp((string) $key, 'search.emulate-release') === 0 && is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+        return null;
+    }
+
+    /** True if the active emulate-release level is >= $minVersion (X.Y.Z strings). */
+    protected function emulateReleaseAtLeast(string $minVersion): bool
+    {
+        $level = $this->emulateReleaseLevel();
+        if ($level === null) {
+            return false;
+        }
+        return version_compare($level, $minVersion, '>=');
+    }
+
+    /* ── FT.SEARCH wave 2: INKEYS, WITHSCORES, SCORER, COUNT ──────────── */
+
+    public function testFtSearchInKeysRestrictsResults()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for INKEYS.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())
+                    ->index($idx)
+                    ->addField(new FtTextField('title'))
+            );
+            $this->getClient()->hSet($prefix . '1', ['title' => 'Widget']);
+            $this->getClient()->hSet($prefix . '2', ['title' => 'Gadget']);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            // No INKEYS: both match.
+            $result = $this->getClient()->ftSearch(
+                (new FtSearchBuilder())->index($idx)->query('*')
+            );
+            $this->assertEquals(2, $result[0]);
+
+            // INKEYS restricted to one key: only that key matches.
+            $result = $this->getClient()->ftSearch(
+                (new FtSearchBuilder())->index($idx)->query('*')->inKeys([$prefix . '1'])
+            );
+            $this->assertEquals(1, $result[0]);
+
+            // INKEYS with an explicit empty array: excludes every result.
+            $result = $this->getClient()->ftSearch(
+                (new FtSearchBuilder())->index($idx)->query('*')->inKeys([])
+            );
+            $this->assertEquals(0, $result[0]);
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1', $prefix . '2');
+        }
+    }
+
+    public function testFtSearchCountMapsToLimitZeroZero()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for COUNT.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())->index($idx)->addField(new FtTextField('title'))
+            );
+            $this->getClient()->hSet($prefix . '1', ['title' => 'Widget']);
+            $this->getClient()->hSet($prefix . '2', ['title' => 'Gadget']);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            $result = $this->getClient()->ftSearch(
+                (new FtSearchBuilder())->index($idx)->query('*')->count()
+            );
+            // LIMIT 0 0: total count, zero result rows.
+            $this->assertEquals(2, $result[0]);
+            $this->assertIsArray($result);
+            $this->assertEquals(1, count($result));
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1', $prefix . '2');
+        }
+    }
+
+    public function testFtSearchCountAndLimitAreMutuallyExclusive()
+    {
+        $threw = false;
+        try {
+            (new FtSearchBuilder())->index('idx')->query('*')->count()->limit(0, 10)->toArray();
+        } catch (\ValkeyGlideException $e) {
+            $threw = true;
+        }
+        $this->assertTrue($threw);
+    }
+
+    public function testFtSearchWithScores()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for WITHSCORES.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())->index($idx)->addField(new FtTextField('title'))
+            );
+            $this->getClient()->hSet($prefix . '1', ['title' => 'Widget wireless']);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            $result = $this->getClient()->ftSearch(
+                (new FtSearchBuilder())->index($idx)->query('@title:wireless')->withScores()
+            );
+            $this->assertEquals(1, $result[0]);
+            // [score, field_map] per document instead of just field_map.
+            $doc = $result[1][1];
+            $this->assertIsArray($doc);
+            $this->assertIsString($doc[0]);
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1');
+        }
+    }
+
+    /* ── FT.AGGREGATE wave 2: ADDSCORES, SCORER, WITHCURSOR ───────────── */
+
+    public function testFtAggregateAddScoresExposesScoreField()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for ADDSCORES.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())->index($idx)->addField(new FtTextField('title'))
+            );
+            $this->getClient()->hSet($prefix . '1', ['title' => 'wireless widget']);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            $result = $this->getClient()->ftAggregate(
+                (new FtAggregateBuilder())
+                    ->index($idx)
+                    ->query('@title:wireless')
+                    ->addScores()
+                    ->load(['__score'])
+            );
+            $this->assertIsArray($result);
+            $this->assertTrue(count($result) >= 1);
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1');
+        }
+    }
+
+    public function testFtAggregateWithCursorPagesResults()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for WITHCURSOR.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())->index($idx)->addField(new FtTextField('title'))
+            );
+            for ($i = 0; $i < 5; $i++) {
+                $this->getClient()->hSet($prefix . $i, ['title' => 'widget ' . $i]);
+            }
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            $result = $this->getClient()->ftAggregate(
+                (new FtAggregateBuilder())
+                    ->index($idx)
+                    ->query('*')
+                    ->withCursor(count: 2)
+            );
+            // [rows, cursor_id]
+            $this->assertIsArray($result);
+            $this->assertEquals(2, count($result));
+            $cursorId = $result[1];
+            $this->assertIsInt($cursorId);
+
+            if ($cursorId !== 0) {
+                $page2 = $this->getClient()->ftCursorRead($idx, $cursorId);
+                $this->assertIsArray($page2);
+                // Discard the cursor early if it's not already exhausted.
+                if (is_array($page2) && isset($page2[1]) && $page2[1] !== 0) {
+                    $this->getClient()->ftCursorDel($idx, $page2[1]);
+                }
+            }
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $keys = [];
+            for ($i = 0; $i < 5; $i++) {
+                $keys[] = $prefix . $i;
+            }
+            $this->getClient()->del(...$keys);
+        }
+    }
+
+    /* ── FT.HYBRID wave 2 ──────────────────────────────────────────────── */
+
+    public function testFtHybridFusesSearchAndVsimArms()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for FT.HYBRID.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())
+                    ->index($idx)
+                    ->addField(new FtTextField('title'))
+                    ->addField(FtVectorField::flat('vec', 2, 'L2'))
+            );
+            $this->getClient()->hSet($prefix . '1', [
+                'title' => 'wireless widget',
+                'vec' => pack('f*', 1.0, 0.0),
+            ]);
+            $this->getClient()->hSet($prefix . '2', [
+                'title' => 'wired gadget',
+                'vec' => pack('f*', 0.0, 1.0),
+            ]);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            $result = $this->getClient()->ftHybrid(
+                (new \ValkeyGlide\Search\FtHybridBuilder())
+                    ->index($idx)
+                    ->search('@title:wireless')
+                    ->vsim('vec', vector: pack('f*', 1.0, 0.0), k: 2)
+                    ->combineRrf()
+                    ->limit(0, 10)
+            );
+            $this->assertIsArray($result);
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1', $prefix . '2');
+        }
+    }
+
+    /**
+     * FT.HYBRID tail-order port rule (jamesx, #7335): emit PARAMS before
+     * any aggregate clause. A FILTER placed directly after the VSIM arm
+     * (no LOAD in between) must land in the pipeline tail, not get
+     * silently claimed by the server's VSIM parser as a VSIM pre-filter.
+     * This test needs the FILTER directly after the VSIM arm with no
+     * intervening LOAD -- with a LOAD in between it would pass even with
+     * the bug present.
+     */
+    public function testFtHybridFilterAfterVsimArmIsPipelineFilterNotVsimPrefilter()
+    {
+        $this->skipIfModuleNotAvailable();
+        if (!$this->requiresSearch13()) {
+            throw new TestSkippedException('valkey-search 1.3+ required for FT.HYBRID.');
+        }
+        $idx = uniqid('phptest_');
+        $prefix = $idx . ':';
+        try {
+            $this->getClient()->ftCreate(
+                (new FtCreateBuilder())
+                    ->index($idx)
+                    ->addField(new FtTextField('title'))
+                    ->addField(new FtNumericField('price'))
+                    ->addField(FtVectorField::flat('vec', 2, 'L2'))
+            );
+            $this->getClient()->hSet($prefix . '1', [
+                'title' => 'wireless widget',
+                'price' => '5',
+                'vec' => pack('f*', 1.0, 0.0),
+            ]);
+            $this->getClient()->hSet($prefix . '2', [
+                'title' => 'wireless widget',
+                'price' => '50',
+                'vec' => pack('f*', 1.0, 0.0),
+            ]);
+            usleep(self::INDEX_SYNC_DELAY_US);
+
+            // No LOAD between VSIM and FILTER: this is the exact shape that
+            // regresses if PARAMS/clause ordering is wrong.
+            $result = $this->getClient()->ftHybrid(
+                (new \ValkeyGlide\Search\FtHybridBuilder())
+                    ->index($idx)
+                    ->search('@title:wireless')
+                    ->vsim('vec', vector: pack('f*', 1.0, 0.0), k: 2)
+                    ->filter('@price > 10')
+            );
+            $this->assertIsArray($result);
+        } finally {
+            $this->getClient()->ftDropIndex($idx);
+            $this->getClient()->del($prefix . '1', $prefix . '2');
+        }
+    }
+
     /* ── FT.CREATE ──────────────────────────────────────────────────── */
 
     public function testFtCreateSimpleHnswVector()

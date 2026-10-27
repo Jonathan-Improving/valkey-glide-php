@@ -32,6 +32,9 @@ class FtAggregateBuilder
 {
     private ?string $indexName = null;
     private ?string $queryStr = null;
+    private bool $addScores = false;
+    private ?string $scorer = null;
+    private ?array $withCursor = null;
 
     /**
      * Flat token list built incrementally.
@@ -220,6 +223,49 @@ class FtAggregateBuilder
     }
 
     /**
+     * Expose the relevance score as a pipeline field named `__score`
+     * (valkey-search 1.3.0). Reachable afterward like any other pipeline
+     * field, from load(), apply(), sortBy() or a reducer expression.
+     *
+     * Emitted after the query's DIALECT token, matching the server's own
+     * tail-of-pipeline placement for this option.
+     */
+    public function addScores(bool $addScores = true): self
+    {
+        $this->addScores = $addScores;
+        return $this;
+    }
+
+    /**
+     * Set the scoring function used to compute `__score` (valkey-search
+     * 1.3.0). `'BM25STD'` is the only value currently registered by the
+     * server. Has no visible effect unless combined with addScores().
+     */
+    public function scorer(string $scorer): self
+    {
+        $this->scorer = $scorer;
+        return $this;
+    }
+
+    /**
+     * Request a paged reply instead of the whole result set at once
+     * (valkey-search 1.3.0). Paged replies become `[rows, cursor_id]`;
+     * pass `cursor_id` to `$client->ftCursorRead()`/`ftCursorDel()` to
+     * fetch subsequent pages or discard the cursor early. A paged query,
+     * and every subsequent FT.CURSOR READ/DEL against it, is always
+     * routed to the PRIMARY of the index's slot.
+     *
+     * @param int|null $count   Rows to return per page.
+     * @param int|null $maxIdle How long (ms) the cursor may sit idle
+     *                          before the server discards it.
+     */
+    public function withCursor(?int $count = null, ?int $maxIdle = null): self
+    {
+        $this->withCursor = ['count' => $count, 'maxidle' => $maxIdle];
+        return $this;
+    }
+
+    /**
      * Convert the builder state into the arguments for ftAggregate().
      *
      * Returns ['index' => string, 'query' => string, 'options' => array|null].
@@ -237,10 +283,30 @@ class FtAggregateBuilder
             throw new \ValkeyGlideException('FtAggregateBuilder: query is required');
         }
 
+        $tokens = $this->tokens;
+        if ($this->addScores) {
+            $tokens[] = 'ADDSCORES';
+        }
+        if ($this->scorer !== null) {
+            $tokens[] = 'SCORER';
+            $tokens[] = $this->scorer;
+        }
+        if ($this->withCursor !== null) {
+            $tokens[] = 'WITHCURSOR';
+            if ($this->withCursor['count'] !== null) {
+                $tokens[] = 'COUNT';
+                $tokens[] = (string) $this->withCursor['count'];
+            }
+            if ($this->withCursor['maxidle'] !== null) {
+                $tokens[] = 'MAXIDLE';
+                $tokens[] = (string) $this->withCursor['maxidle'];
+            }
+        }
+
         return [
             'index'   => $this->indexName,
             'query'   => $this->queryStr,
-            'options' => empty($this->tokens) ? null : $this->tokens,
+            'options' => empty($tokens) ? null : $tokens,
         ];
     }
 }

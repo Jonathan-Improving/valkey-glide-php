@@ -178,6 +178,31 @@ def patch_rust_types_rs(rust_types_file):
             needs_patching = True
             log_message("Applied eviction_policy patch")
 
+        # Fix unix_socket_path (NodeAddress): changed from Option<Chars> to Chars
+        # (proto3 optional stripped). The generated field is now a plain `Chars`,
+        # so treat an empty string as "unset" -- matches the field's own doc
+        # comment ("Keeps an empty unix_socket_path so client creation rejects it").
+        unix_socket_path_pattern = (
+            r'unix_socket_path:\s*value\s*'
+            r'\.unix_socket_path\s*'
+            r'\.as_ref\(\)\s*'
+            r'\.map\(\|path\|\s*PathBuf::from\(&\*\*path\)\),'
+        )
+        unix_socket_path_replacement = (
+            'unix_socket_path: if value.unix_socket_path.is_empty() {\n'
+            '                None\n'
+            '            } else {\n'
+            '                Some(PathBuf::from(value.unix_socket_path.to_string()))\n'
+            '            },'
+        )
+        if re.search(unix_socket_path_pattern, new_content, re.DOTALL):
+            if not needs_patching:
+                create_backup(rust_types_file)
+            new_content = re.sub(
+                unix_socket_path_pattern, unix_socket_path_replacement, new_content, flags=re.DOTALL)
+            needs_patching = True
+            log_message("Applied unix_socket_path patch")
+
         # Fix client_cert_path: changed from Option<Chars> to Chars (proto3 optional stripped).
         # The generated field is now a plain `Chars`, so treat an empty string as "unset".
         client_cert_path_pattern = (
@@ -270,6 +295,7 @@ def verify_rust_patch(rust_types_file):
         eviction_fixed = '.enum_value()' in content and '.and_then(|enum_or_unknown|' not in content
         client_cert_path_fixed = 'Some(value.client_cert_path.to_string()).filter(|p| !p.is_empty())' in content
         client_key_path_fixed = 'Some(value.client_key_path.to_string()).filter(|p| !p.is_empty())' in content
+        unix_socket_path_fixed = 'Some(PathBuf::from(value.unix_socket_path.to_string()))' in content
         cert_reload_interval_fixed = 'interval_seconds: none_if_zero(proto_reload.interval_seconds)' in content
         recovery_queue_fixed = 'let recovery_requests_queue_size = none_if_zero(value.recovery_requests_queue_size);' in content
 
@@ -277,6 +303,7 @@ def verify_rust_patch(rust_types_file):
                      refresh_fixed and compression_fixed and read_only_fixed and
                      max_decompressed_fixed and eviction_fixed and
                      client_cert_path_fixed and client_key_path_fixed and
+                     unix_socket_path_fixed and
                      cert_reload_interval_fixed and recovery_queue_fixed)
 
         if all_fixed:
@@ -304,6 +331,8 @@ def verify_rust_patch(rust_types_file):
                 missing.append("client_cert_path fix")
             if not client_key_path_fixed:
                 missing.append("client_key_path fix")
+            if not unix_socket_path_fixed:
+                missing.append("unix_socket_path fix")
             if not cert_reload_interval_fixed:
                 missing.append("cert_reload.interval_seconds fix")
             if not recovery_queue_fixed:
@@ -425,6 +454,84 @@ def patch_ffi_lib_rs(ffi_lib_file):
             needs_patching = True
             log_message("Applied FFI eviction_policy patch")
 
+        # Fix credential_provider_key: Option<Chars> -> Chars (proto3 optional
+        # stripped). `.is_some()` doesn't exist on a plain `Chars`; an empty
+        # string is the "unset" state (mirrors the Rust-side client_cert_path/
+        # client_key_path/unix_socket_path treatment of the same field shape).
+        # The connection_request.* pattern must run BEFORE the bare request.*
+        # one below -- "request" is a substring of "connection_request", so
+        # applying the bare pattern first would also rewrite inside
+        # "connection_request.credential_provider_key..." and corrupt the
+        # identifier (confirmed the hard way: produced "connection_!request...").
+        cred_key_conn_is_some_pattern = r'connection_request\.credential_provider_key\.is_some\(\)'
+        cred_key_conn_is_some_replacement = '!connection_request.credential_provider_key.is_empty()'
+        if re.search(cred_key_conn_is_some_pattern, new_content):
+            if not needs_patching:
+                create_backup(ffi_lib_file)
+            new_content = re.sub(
+                cred_key_conn_is_some_pattern, cred_key_conn_is_some_replacement, new_content)
+            needs_patching = True
+            log_message("Applied FFI credential_provider_key (connection_request) patch")
+
+        cred_key_is_some_pattern = r'(?<!connection_)\brequest\.credential_provider_key\.is_some\(\)'
+        cred_key_is_some_replacement = '!request.credential_provider_key.is_empty()'
+        if re.search(cred_key_is_some_pattern, new_content):
+            if not needs_patching:
+                create_backup(ffi_lib_file)
+            new_content = re.sub(cred_key_is_some_pattern, cred_key_is_some_replacement, new_content)
+            needs_patching = True
+            log_message("Applied FFI credential_provider_key (request) patch")
+
+        # Fix unix_socket_path (NodeAddress) writer: Some(path.into()) -> path.into()
+        unix_write_pattern = r'node_address\.unix_socket_path = Some\(path\.into\(\)\);'
+        unix_write_replacement = 'node_address.unix_socket_path = path.into();'
+        if re.search(unix_write_pattern, new_content):
+            if not needs_patching:
+                create_backup(ffi_lib_file)
+            new_content = re.sub(unix_write_pattern, unix_write_replacement, new_content)
+            needs_patching = True
+            log_message("Applied FFI unix_socket_path (writer) patch")
+
+        # Fix unix_socket_path (NodeAddress) reader: .as_deref().map(...) ->
+        # empty-string-means-unset, matching the Rust-side types.rs conversion.
+        unix_read_pattern = (
+            r'unix_socket_path:\s*proto_addr\s*\n'
+            r'\s*\.unix_socket_path\s*\n'
+            r'\s*\.as_deref\(\)\s*\n'
+            r'\s*\.map\(std::path::PathBuf::from\),'
+        )
+        unix_read_replacement = (
+            'unix_socket_path: if proto_addr.unix_socket_path.is_empty() {\n'
+            '            None\n'
+            '        } else {\n'
+            '            Some(std::path::PathBuf::from(proto_addr.unix_socket_path.to_string()))\n'
+            '        },'
+        )
+        if re.search(unix_read_pattern, new_content, re.DOTALL):
+            if not needs_patching:
+                create_backup(ffi_lib_file)
+            new_content = re.sub(
+                unix_read_pattern, unix_read_replacement, new_content, flags=re.DOTALL)
+            needs_patching = True
+            log_message("Applied FFI unix_socket_path (reader) patch")
+
+        # Fix unix_socket_path test helpers: the field is now a plain `Chars`
+        # (not `Option<Chars>`), so `.as_deref()` no longer compiles. These
+        # test sites compare against `Some("<path>")` (a `&str`), so replace
+        # the read with an equivalent empty-string-means-None `Option<&str>`
+        # expression, leaving the `assert_eq!(..., Some("..."))` lines intact.
+        unix_test_pattern = r'([\w.\[\]]+)\.unix_socket_path\.as_deref\(\),'
+        unix_test_replacement = (
+            r'if \1.unix_socket_path.is_empty() {'
+            r' None } else { Some(\1.unix_socket_path.as_str()) },'
+        )
+        if re.search(unix_test_pattern, new_content):
+            if not needs_patching:
+                create_backup(ffi_lib_file)
+            new_content = re.sub(unix_test_pattern, unix_test_replacement, new_content)
+            needs_patching = True
+            log_message("Applied FFI unix_socket_path (test helper) patch")
+
         if needs_patching:
             with open(ffi_lib_file, 'w') as f:
                 f.write(new_content)
@@ -452,6 +559,11 @@ def verify_ffi_patch(ffi_lib_file):
             "compression_level": 'config.compression_level = Some(level_val)' not in content,
             "refresh_interval_seconds": 'iam_creds.refresh_interval_seconds = Some(interval_val)' not in content,
             "eviction_policy": 'config.eviction_policy = Some(::protobuf::EnumOrUnknown::new(policy_enum))' not in content,
+            "credential_provider_key (request)": 'request.credential_provider_key.is_some()' not in content,
+            "credential_provider_key (connection_request)": 'connection_request.credential_provider_key.is_some()' not in content,
+            "unix_socket_path (writer)": 'node_address.unix_socket_path = Some(path.into())' not in content,
+            "unix_socket_path (reader)": '.unix_socket_path\n            .as_deref()\n            .map(std::path::PathBuf::from),' not in content,
+            "unix_socket_path (test helpers)": '.unix_socket_path.as_deref(),' not in content,
         }
 
         missing = [name for name, fixed in checks.items() if not fixed]
@@ -465,6 +577,63 @@ def verify_ffi_patch(ffi_lib_file):
 
     except Exception as e:
         log_message(f"Error verifying FFI patch: {e}", "ERROR")
+        return False
+
+def patch_pool_ffi_rs(pool_ffi_file):
+    """Patch ffi/src/pool_ffi.rs for the credential_provider_key field, which
+    changed from Option<Chars> to Chars when 'optional' was stripped from the
+    proto. A plain Chars has no .is_some(); an empty string is "unset".
+    """
+    if not os.path.exists(pool_ffi_file):
+        log_message(f"pool_ffi.rs file not found: {pool_ffi_file}", "WARN")
+        return True
+
+    log_message(f"Patching pool_ffi.rs file: {pool_ffi_file}")
+
+    try:
+        with open(pool_ffi_file, 'r') as f:
+            content = f.read()
+
+        needs_patching = False
+        new_content = content
+
+        cred_key_pattern = r'r\.credential_provider_key\.is_some\(\)'
+        cred_key_replacement = '!r.credential_provider_key.is_empty()'
+        if re.search(cred_key_pattern, content):
+            create_backup(pool_ffi_file)
+            new_content = re.sub(cred_key_pattern, cred_key_replacement, new_content)
+            needs_patching = True
+            log_message("Applied pool_ffi.rs credential_provider_key patch")
+
+        if needs_patching:
+            with open(pool_ffi_file, 'w') as f:
+                f.write(new_content)
+            log_message(f"Successfully patched pool_ffi.rs: {pool_ffi_file}")
+            return True
+        else:
+            log_message(f"pool_ffi.rs already patched: {pool_ffi_file}")
+            return True
+
+    except Exception as e:
+        log_message(f"Error patching {pool_ffi_file}: {e}", "ERROR")
+        return False
+
+def verify_pool_ffi_patch(pool_ffi_file):
+    """Verify that the pool_ffi.rs patch was applied correctly."""
+    try:
+        with open(pool_ffi_file, 'r') as f:
+            content = f.read()
+
+        if 'r.credential_provider_key.is_some()' not in content:
+            log_message("pool_ffi.rs patch verification: SUCCESS")
+            return True
+        log_message(
+            "pool_ffi.rs patch verification: FAILED - still has r.credential_provider_key.is_some()",
+            "ERROR")
+        return False
+
+    except Exception as e:
+        log_message(f"Error verifying pool_ffi.rs patch: {e}", "ERROR")
         return False
 
 def main():
@@ -483,6 +652,7 @@ def main():
     protobuf_directory = base_dir / "valkey-glide" / "glide-core" / "src" / "protobuf"
     rust_types_file = base_dir / "valkey-glide" / "glide-core" / "src" / "client" / "types.rs"
     ffi_lib_file = base_dir / "valkey-glide" / "ffi" / "src" / "lib.rs"
+    pool_ffi_file = base_dir / "valkey-glide" / "ffi" / "src" / "pool_ffi.rs"
 
     success = True
 
@@ -518,6 +688,17 @@ def main():
                 success = False
     else:
         log_message(f"FFI lib.rs file not found: {ffi_lib_file}", "WARN")
+
+    # Step 4: Patch FFI pool_ffi.rs
+    log_message("=== Phase 4: Patching FFI Code (pool_ffi.rs) ===")
+    if pool_ffi_file.exists():
+        if not patch_pool_ffi_rs(str(pool_ffi_file)):
+            success = False
+        else:
+            if not verify_pool_ffi_patch(str(pool_ffi_file)):
+                success = False
+    else:
+        log_message(f"pool_ffi.rs file not found: {pool_ffi_file}", "WARN")
 
     # Summary
     if success:

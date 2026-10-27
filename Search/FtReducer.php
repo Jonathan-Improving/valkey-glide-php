@@ -73,6 +73,45 @@ class FtReducer
         return new self('STDDEV', [$property]);
     }
 
+    /**
+     * TOLIST — collect all values for `$property` across the records in
+     * a group into a single array, removing duplicates and nil values.
+     * Values are returned in first-encountered order.
+     */
+    public static function toList(string $property): self
+    {
+        return new self('TOLIST', [$property]);
+    }
+
+    /**
+     * FIRST_VALUE — return the value of `$property` from a single record
+     * in the group. Without `$by`, the first record encountered wins.
+     * With `$by`, the record whose `$by` property is smallest (`'ASC'`,
+     * the default) or largest (`'DESC'`) wins; ties keep the
+     * first-encountered record.
+     */
+    public static function firstValue(string $property, ?string $by = null, string $order = 'ASC'): self
+    {
+        $args = [$property];
+        if ($by !== null) {
+            $args[] = 'BY';
+            $args[] = $by;
+            $args[] = strtoupper($order);
+        }
+        return new self('FIRST_VALUE', $args);
+    }
+
+    /**
+     * RANDOM_SAMPLE — return a uniform random sample of up to `$size`
+     * values of `$property` from the records in a group, using
+     * reservoir sampling. `$size` must be a non-negative integer no
+     * greater than 1000; the server rejects values outside this range.
+     */
+    public static function randomSample(string $property, int $size): self
+    {
+        return new self('RANDOM_SAMPLE', [$property, (string) $size]);
+    }
+
     /** Set the output alias (AS name). */
     public function as(string $alias): self
     {

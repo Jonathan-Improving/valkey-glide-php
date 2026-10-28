@@ -17,6 +17,7 @@ class FtTagField
     private string $name;
     private ?string $alias = null;
     private bool $sortable = false;
+    private bool $unf = false;
     private ?string $separator = null;
     private bool $caseSensitive = false;
 
@@ -37,6 +38,18 @@ class FtTagField
         return $this;
     }
 
+    /**
+     * Keep the sorted value in its original (un-normalized) form, e.g.
+     * preserving case for TAG fields that would otherwise be lowercased
+     * for sorting (valkey-search 1.3.0, src/commands/ft_create_parser.cc).
+     * Requires sortable() to also be set; toArray() throws otherwise.
+     */
+    public function unf(bool $unf = true): self
+    {
+        $this->unf = $unf;
+        return $this;
+    }
+
     public function separator(string $separator): self
     {
         $this->separator = $separator;
@@ -49,9 +62,15 @@ class FtTagField
         return $this;
     }
 
-    /** @internal */
+    /**
+     * @internal
+     * @throws \ValkeyGlideException if unf() is set without sortable().
+     */
     public function toArray(): array
     {
+        if ($this->unf && !$this->sortable) {
+            throw new \ValkeyGlideException('FtTagField: unf() requires sortable() to be set');
+        }
         $f = ['name' => $this->name, 'type' => 'TAG'];
         if ($this->alias !== null) {
             $f['alias'] = $this->alias;
@@ -64,6 +83,9 @@ class FtTagField
         }
         if ($this->sortable) {
             $f['sortable'] = true;
+        }
+        if ($this->unf) {
+            $f['unf'] = true;
         }
         return $f;
     }

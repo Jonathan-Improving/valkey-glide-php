@@ -112,16 +112,19 @@ int build_ft_info_args(const char*   index_name,
  * $options is an associative array with (at minimum) 'search' and 'vsim'
  * sub-arrays describing the two mandatory arms, plus any of the optional
  * FT.HYBRID keys (COMBINE, LOAD, clauses, WITHCURSOR, LOCALONLY, TIMEOUT,
- * PARAMS, DIALECT). See valkey_glide_ft_hybrid_common.c for the full shape
- * FtHybridBuilder::toArray() produces.
+ * PARAMS, DIALECT). See valkey_glide_ft_common.c's ft_hybrid_build_vsim_arm()
+ * for the full shape FtHybridBuilder::toArray() produces.
  *
  * Unlike the other FT.* builders, a raw (non-$-prefixed) VSIM vector value
  * requires the builder to synthesize an internal PARAMS entry; that
- * synthesis happens here (in C), not in PHP, because whether a value is
- * "binary data that happens to start with the byte 0x24" vs "a $name
- * string reference" can only be decided once the zval's real type
- * (IS_STRING vs an opaque binary carrier) is visible -- see
- * is_dollar_param_reference() in valkey_glide_ft_hybrid_common.c.
+ * synthesis happens here (in C), reading the 'isParamRef' flag the PHP
+ * builder already decided (FtHybridBuilder::vsim() sets it based on
+ * which of its two mutually exclusive parameters the caller passed),
+ * rather than inspecting the zval's content -- a raw vector's packed
+ * binary representation can legitimately start with the byte 0x24
+ * ('$') by coincidence, so a "does this string start with $" content
+ * check would misclassify it as a parameter reference. See
+ * ft_hybrid_build_vsim_arm() in valkey_glide_ft_common.c.
  */
 int build_ft_hybrid_args(const char*   index_name,
                          size_t        index_name_len,

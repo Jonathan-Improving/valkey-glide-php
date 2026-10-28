@@ -2,23 +2,21 @@
 # Reproduces the module-test shape of the main valkey-glide repo's
 # "Modules Tests" job for this PHP client, against an overridable module
 # image. Follows the same approach as that repo's
-# utils/run-modules-ci-locally.sh (adapted here: PHP has no cluster-test
-# runner wired to this harness yet, so this drives the standalone module
-# server only -- ValkeyGlideSearchTest.php, not the cluster variant).
+# utils/run-modules-ci-locally.sh, running both the standalone module
+# server (ValkeyGlideSearchTest.php) and the cluster one
+# (ValkeyGlideClusterSearchTest.php).
 #
-# No module CI job exists yet for this repo (PG-14) -- this script and
+# No module CI job exists yet for this repo -- this script and
 # utils/start-valkey-docker-modules.sh (vendored verbatim from the main
 # repo, see that file's own header) are new.
 #
-# Usage: the same three configurations used across every language's wave-3
-# port:
+# Usage: the same three configurations used across every language's port:
 #   utils/run-modules-ci-locally.sh                                       # 1: rc2, emulate-release 1.3.0 (default; run-proof)
 #   IMAGE=valkey/valkey-bundle:9.1.3 EMULATE_RELEASE="" utils/run-modules-ci-locally.sh   # 2: 9.1.3, search 1.2.1 (skip-proof)
 #   EMULATE_RELEASE="" utils/run-modules-ci-locally.sh                    # 3: rc2, module's own default emulate-release
 #
 # SEARCH_MODULE_HOST_PATH overrides the in-container search module .so
-# with a host-built one (see BUILD-MODULES-1.3.md in the main repo's
-# planning tree for the rc2 build recipe); SEARCH_MODULE_PATH overrides
+# with a host-built one; SEARCH_MODULE_PATH overrides
 # only the in-container path baked into the generated conf. Both are
 # read directly by start-valkey-docker-modules.sh.
 #
@@ -74,14 +72,18 @@ done
 
 echo "=== Running PHP module tests (standalone, port ${STANDALONE_PORT}) ==="
 cd "${REPO_ROOT}/tests"
+set +e
 php -n -d extension="${REPO_ROOT}/modules/valkey_glide.so" TestValkeyGlide.php \
     --host 127.0.0.1 --port "$STANDALONE_PORT" --class valkeyglidesearch
 STANDALONE_STATUS=$?
+set -e
 
 echo "=== Running PHP module tests (cluster slot primary, port ${CLUSTER_PORT_START}) ==="
+set +e
 php -n -d extension="${REPO_ROOT}/modules/valkey_glide.so" TestValkeyGlide.php \
     --host 127.0.0.1 --port "$CLUSTER_PORT_START" --class valkeyglideclustersearch
 CLUSTER_STATUS=$?
+set -e
 
 if [ "$STANDALONE_STATUS" -ne 0 ] || [ "$CLUSTER_STATUS" -ne 0 ]; then
     echo "FAILED: standalone exit=${STANDALONE_STATUS}, cluster exit=${CLUSTER_STATUS}" >&2

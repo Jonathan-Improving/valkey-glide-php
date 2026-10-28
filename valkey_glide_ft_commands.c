@@ -521,10 +521,11 @@ int execute_ft_aliaslist_command(zval* object, int argc, zval* return_value, zen
  *
  * Dispatched via CustomCommand, not a typed RequestType. Typed
  * RequestType.FtHybrid does not exist in the glide-core commit this
- * submodule is pinned to (the D25 core PR, valkey-glide#7456, has not
- * merged upstream yet) -- see this port's PR description's Limitations
- * section. CustomCommand requires the full command name as argv[0];
- * build_ft_hybrid_args() does not include it, so it is prepended here.
+ * submodule is pinned to (the request-type core PR, valkey-glide#7456,
+ * has not merged upstream yet) -- see this port's PR description's
+ * Limitations section. CustomCommand requires the full command name as
+ * argv[0]; build_ft_hybrid_args() does not include it, so it is
+ * prepended here.
  * ==================================================================== */
 int execute_ft_hybrid_command(zval* object, int argc, zval* return_value, zend_class_entry* ce) {
     valkey_glide_object* valkey_glide;
@@ -645,24 +646,31 @@ int execute_ft_cursor_read_command(zval* object, int argc, zval* return_value, z
         count_len = snprintf(count_str, sizeof(count_str), ZEND_LONG_FMT, count);
     }
 
-    int           argn = count_is_null ? 3 : 5;
-    const char*   args[5];
-    size_t        lens[5];
+    /* FT.CURSOR READ <index> <cursor_id> [COUNT <count>] -- the COUNT
+     * keyword itself was missing here (H-2): the server's grammar
+     * requires the literal token before the count value
+     * (valkey-search src/commands/ft_cursor.cc), and without it the
+     * trailing number is rejected with "Unexpected argument `<count>`".
+     */
+    const char* args[6];
+    size_t      lens[6];
+    int         argn;
     args[0] = "FT.CURSOR";
     lens[0] = sizeof("FT.CURSOR") - 1;
     args[1] = "READ";
     lens[1] = sizeof("READ") - 1;
     args[2] = index_name;
     lens[2] = index_name_len;
-    if (!count_is_null) {
-        args[3] = cursor_id_str;
-        lens[3] = (size_t) cursor_id_len;
-        args[4] = count_str;
-        lens[4] = (size_t) count_len;
+    args[3] = cursor_id_str;
+    lens[3] = (size_t) cursor_id_len;
+    if (count_is_null) {
+        argn = 4;
     } else {
-        args[3] = cursor_id_str;
-        lens[3] = (size_t) cursor_id_len;
-        argn    = 4;
+        args[4] = "COUNT";
+        lens[4] = sizeof("COUNT") - 1;
+        args[5] = count_str;
+        lens[5] = (size_t) count_len;
+        argn    = 6;
     }
 
     return execute_ft_command_internal(valkey_glide->glide_client,

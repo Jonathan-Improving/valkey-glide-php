@@ -17,6 +17,7 @@ class FtTextField
     private string $name;
     private ?string $alias = null;
     private bool $sortable = false;
+    private bool $unf = false;
     private bool $noStem = false;
     private ?float $weight = null;
     private bool $withSuffixTrie = false;
@@ -36,6 +37,19 @@ class FtTextField
     public function sortable(bool $sortable = true): self
     {
         $this->sortable = $sortable;
+        return $this;
+    }
+
+    /**
+     * Keep the sorted value in its original (un-normalized) form, e.g.
+     * preserving case for TEXT fields that would otherwise be
+     * lowercased for sorting (valkey-search 1.3.0,
+     * src/commands/ft_create_parser.cc). Requires sortable() to also be
+     * set; toArray() throws otherwise.
+     */
+    public function unf(bool $unf = true): self
+    {
+        $this->unf = $unf;
         return $this;
     }
 
@@ -65,7 +79,8 @@ class FtTextField
 
     /**
      * @internal
-     * @throws \ValkeyGlideException if mutually exclusive options are combined.
+     * @throws \ValkeyGlideException if mutually exclusive options are combined,
+     *         or if unf() is set without sortable().
      */
     public function toArray(): array
     {
@@ -73,6 +88,9 @@ class FtTextField
             throw new \ValkeyGlideException(
                 'FtTextField: WITHSUFFIXTRIE and NOSUFFIXTRIE are mutually exclusive'
             );
+        }
+        if ($this->unf && !$this->sortable) {
+            throw new \ValkeyGlideException('FtTextField: unf() requires sortable() to be set');
         }
 
         $f = ['name' => $this->name, 'type' => 'TEXT'];
@@ -93,6 +111,9 @@ class FtTextField
         }
         if ($this->sortable) {
             $f['sortable'] = true;
+        }
+        if ($this->unf) {
+            $f['unf'] = true;
         }
         return $f;
     }

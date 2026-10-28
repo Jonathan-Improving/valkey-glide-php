@@ -120,20 +120,36 @@ class FtAggregateBuilder
     /**
      * Load fields from the document.
      *
-     * Pass ['*'] to load all fields, or a list of field names.
+     * Pass ['*'] to load all fields, or a list of field identifiers.
+     * Each entry is either a plain field identifier (string) or a
+     * LoadField to rename it via AS (valkey-search 1.3.0; requires
+     * search.emulate-release >= 1.3.0 to take effect -- see LoadField's
+     * docstring). The emitted count is a token budget, not an entry
+     * count: a LoadField with an alias contributes 3 tokens (field, AS,
+     * alias) against the budget, matching the server's own accounting.
      *
-     * @param array $fields Field names (prefixed with @ or not).
+     * @param array<string|LoadField> $fields
      */
     public function load(array $fields): self
     {
         $this->tokens[] = 'LOAD';
         if ($fields === ['*']) {
             $this->tokens[] = '*';
-        } else {
-            $this->tokens[] = (string) count($fields);
-            foreach ($fields as $field) {
-                $this->tokens[] = $field;
+            return $this;
+        }
+        $entryTokens = [];
+        foreach ($fields as $field) {
+            if ($field instanceof LoadField) {
+                foreach ($field->toTokens() as $t) {
+                    $entryTokens[] = $t;
+                }
+            } else {
+                $entryTokens[] = (string) $field;
             }
+        }
+        $this->tokens[] = (string) count($entryTokens);
+        foreach ($entryTokens as $t) {
+            $this->tokens[] = $t;
         }
         return $this;
     }

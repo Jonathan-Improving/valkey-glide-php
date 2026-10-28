@@ -87,16 +87,25 @@ class FtReducer
      * FIRST_VALUE — return the value of `$property` from a single record
      * in the group. Without `$by`, the first record encountered wins.
      * With `$by`, the record whose `$by` property is smallest (`'ASC'`,
-     * the default) or largest (`'DESC'`) wins; ties keep the
-     * first-encountered record.
+     * the server's own default) or largest (`'DESC'`) wins; ties keep
+     * the first-encountered record. `$order` requires `$by` to be set;
+     * omitting it relies on the server's own ASC default rather than
+     * emitting a redundant explicit `ASC` token.
+     *
+     * @throws \ValkeyGlideException if `$order` is given without `$by`.
      */
-    public static function firstValue(string $property, ?string $by = null, string $order = 'ASC'): self
+    public static function firstValue(string $property, ?string $by = null, ?string $order = null): self
     {
+        if ($order !== null && $by === null) {
+            throw new \ValkeyGlideException('FtReducer::firstValue: order requires by to be set');
+        }
         $args = [$property];
         if ($by !== null) {
             $args[] = 'BY';
             $args[] = $by;
-            $args[] = strtoupper($order);
+            if ($order !== null) {
+                $args[] = strtoupper($order);
+            }
         }
         return new self('FIRST_VALUE', $args);
     }

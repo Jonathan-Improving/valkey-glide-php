@@ -281,14 +281,32 @@ class FtHybridBuilder
 
     /**
      * Load only the fields passed in `$fields`. Each entry is either a
-     * plain field identifier or `['field' => ..., 'as' => alias]` to
-     * rename it. Must NOT include either arm's `yieldScoreAs` alias --
+     * plain field identifier (string), a LoadField (renamed via AS --
+     * valkey-search 1.3.0, requires search.emulate-release >= 1.3.0 to
+     * take effect, see LoadField's docstring), or
+     * `['field' => ..., 'as' => alias]` (equivalent to a LoadField,
+     * kept for shape parity with the array the C layer consumes
+     * directly). Must NOT include either arm's `yieldScoreAs` alias --
      * the server rejects that outright even though the alias is
      * otherwise freely reachable from every other clause.
+     *
+     * @param array<string|LoadField|array{field: string, as?: string}> $fields
      */
     public function load(array $fields): self
     {
-        $this->loadFields = $fields;
+        $normalized = [];
+        foreach ($fields as $field) {
+            if ($field instanceof LoadField) {
+                $tokens = $field->toTokens();
+                $normalized[] = [
+                    'field' => $tokens[0],
+                    'as' => $tokens[1] ?? null,
+                ];
+            } else {
+                $normalized[] = $field;
+            }
+        }
+        $this->loadFields = $normalized;
         return $this;
     }
 

@@ -15,6 +15,8 @@
 #include <zend.h>
 #include <zend_API.h>
 #include <zend_exceptions.h>
+#include <zend_strtod.h>
+#include <math.h>
 
 #include "valkey_glide_ft_common.h"
 
@@ -155,30 +157,113 @@ static void ft_buf_add_double(ft_arg_buf_t* buf, double val) {
 static void ft_buf_add_zval(ft_arg_buf_t* buf, zval* z);
 
 /*
- * Format a double the way Python's str(float) does: always at least one
- * digit after a literal decimal point for non-exponential values (Python
- * str(60.0) == "60.0", never "60"). %g strips the trailing ".0" that
- * Python keeps, so this must stay distinct from ft_buf_add_double() above
- * -- used only where argv must byte-match Python's FT.HYBRID output
+ * Format a double the way Python's str(float) does: the shortest
+ * decimal string that round-trips back to the same double, with at
+ * least one digit after a literal decimal point for non-exponential
+ * values (Python str(60.0) == "60.0", never "60"). Uses zend_dtoa's
+ * mode 0 (the classic David Gay dtoa() "shortest round-trip digit
+ * string" mode -- the same primitive var_export()/serialize_precision
+ * = -1 ultimately call through to), rather than the fixed %.6g used by
+ * ft_buf_add_double() above, which truncates past 6 significant digits
+ * and silently diverges from Python beyond that (confirmed:
+ * 0.123456789 -> "0.123457" under %.6g vs Python's "0.123456789").
+ * zend_gcvt(value, 0, ...) was tried first and rejected: its `ndigit`
+ * parameter is a literal significant-digit count, not a "shortest
+ * mode" flag, so 0 silently clamped to a minimal digit count instead of
+ * requesting the shortest round-trip string (confirmed via a live
+ * FT.HYBRID argv capture: ALPHA 0.123456789 came out as "0.1", CONSTANT
+ * 1234567.0 as "1e+6" -- both wrong). zend_dtoa mode 0 does not have
+ * this problem: ndigits is ignored in mode 0, and decpt/sign come back
+ * separately for the caller to place the digits correctly instead of
+ * baking in a fixed format.
+ *
+ * Used only where argv must byte-match Python's FT.HYBRID output
  * (CONSTANT, ALPHA, BETA, SHARD_K_RATIO), confirmed via a direct argv
  * capture (MONITOR) compared against the real FtHybridOptions classes.
  */
 static void ft_buf_add_double_py_str(ft_arg_buf_t* buf, double val) {
     char tmp[64];
-    int  len = snprintf(tmp, sizeof(tmp), "%.6g", val);
-    int  has_dot_or_exp = 0;
-    for (int i = 0; i < len; i++) {
-        if (tmp[i] == '.' || tmp[i] == 'e' || tmp[i] == 'E') {
-            has_dot_or_exp = 1;
-            break;
+    int  out_len = 0;
+
+    if (val == 0.0) {
+        /* zend_dtoa's digit string for 0.0 is "0" with decpt 1; Python
+         * prints "-0.0" for negative zero and "0.0" otherwise -- handle
+         * the sign bit directly rather than relying on dtoa's decpt=1
+         * convention for this one special case. */
+        if (signbit(val)) {
+            tmp[out_len++] = '-';
         }
+        tmp[out_len++] = '0';
+        tmp[out_len++] = '.';
+        tmp[out_len++] = '0';
+        ft_buf_add_copy(buf, tmp, out_len);
+        return;
     }
-    if (!has_dot_or_exp && len > 0 && len + 2 < (int) sizeof(tmp)) {
-        tmp[len]     = '.';
-        tmp[len + 1] = '0';
-        len += 2;
+
+    int    decpt;
+    bool   sign;
+    char*  rve;
+    char*  digits = zend_dtoa(val, 0, 0, &decpt, &sign, &rve);
+    int    ndigits = (int) (rve - digits);
+
+    if (sign) {
+        tmp[out_len++] = '-';
     }
-    ft_buf_add_copy(buf, tmp, len);
+
+    /* Python's float repr switches to scientific notation outside
+     * roughly [1e-4, 1e17) in decimal-point terms; dtoa's own decpt
+     * (the power-of-ten position of the decimal point relative to the
+     * first digit) maps directly onto that same threshold. */
+    if (decpt < -3 || decpt > 16) {
+        /* Scientific: d.dddde+NN (always a sign, lowercase 'e', and at
+         * least one digit after the point even if ndigits == 1 --
+         * confirmed Python never omits it: str(1e20) == '1e+20' has no
+         * forced ".0", so only force a trailing ".0" when ndigits > 1). */
+        tmp[out_len++] = digits[0];
+        if (ndigits > 1) {
+            tmp[out_len++] = '.';
+            for (int i = 1; i < ndigits; i++) {
+                tmp[out_len++] = digits[i];
+            }
+        }
+        tmp[out_len++] = 'e';
+        int exp = decpt - 1;
+        tmp[out_len++] = (exp < 0) ? '-' : '+';
+        char expbuf[8];
+        int  explen = snprintf(expbuf, sizeof(expbuf), "%d", exp < 0 ? -exp : exp);
+        memcpy(tmp + out_len, expbuf, (size_t) explen);
+        out_len += explen;
+    } else if (decpt <= 0) {
+        /* 0.000ddd form. */
+        tmp[out_len++] = '0';
+        tmp[out_len++] = '.';
+        for (int i = 0; i < -decpt; i++) {
+            tmp[out_len++] = '0';
+        }
+        memcpy(tmp + out_len, digits, (size_t) ndigits);
+        out_len += ndigits;
+    } else if (decpt >= ndigits) {
+        /* All significant digits are before the point; pad with
+         * trailing zeros, then the mandatory ".0" Python always keeps
+         * for a whole-number float. */
+        memcpy(tmp + out_len, digits, (size_t) ndigits);
+        out_len += ndigits;
+        for (int i = 0; i < decpt - ndigits; i++) {
+            tmp[out_len++] = '0';
+        }
+        tmp[out_len++] = '.';
+        tmp[out_len++] = '0';
+    } else {
+        /* The point falls inside the digit string. */
+        memcpy(tmp + out_len, digits, (size_t) decpt);
+        out_len += decpt;
+        tmp[out_len++] = '.';
+        memcpy(tmp + out_len, digits + decpt, (size_t) (ndigits - decpt));
+        out_len += ndigits - decpt;
+    }
+
+    zend_freedtoa(digits);
+    ft_buf_add_copy(buf, tmp, out_len);
 }
 
 /* Like ft_buf_add_double_py_str(), but takes a zval (LONG or DOUBLE;
@@ -325,11 +410,15 @@ static int ft_build_field(ft_arg_buf_t* buf, HashTable* field) {
             FT_BUF_LIT(&attrs, "DISTANCE_METRIC");
             ft_buf_add_zval(&attrs, z);
         }
-        /* TYPE defaults to FLOAT32 */
-        z = ft_find(field, "datatype");
-        if (z) {
+        /* TYPE: FLOAT32 (default), FLOAT16, or BFLOAT16 (valkey-search
+         * 1.3.0, src/indexes/vector_base.h). FtVectorField::toArray()
+         * always sends 'vector_type' (defaulting to 'FLOAT32' itself),
+         * so this always has a value; the FLOAT32 literal fallback stays
+         * only in case a hand-built options array omits the key. */
+        z = ft_find(field, "vector_type");
+        if (z && Z_TYPE_P(z) == IS_STRING) {
             FT_BUF_LIT(&attrs, "TYPE");
-            ft_buf_add_zval(&attrs, z);
+            ft_buf_add(&attrs, Z_STRVAL_P(z), Z_STRLEN_P(z));
         } else {
             FT_BUF_LIT(&attrs, "TYPE");
             FT_BUF_LIT(&attrs, "FLOAT32");
@@ -362,9 +451,20 @@ static int ft_build_field(ft_arg_buf_t* buf, HashTable* field) {
         ft_buf_destroy(&attrs);
     }
 
-    /* SORTABLE (common to TEXT, TAG, NUMERIC) */
+    /* SORTABLE (common to TEXT, TAG, NUMERIC, VECTOR). UNF is only
+     * recognised by the server directly after SORTABLE (valkey-search
+     * 1.3.0, src/commands/ft_create_parser.cc: "UNF is only recognized
+     * directly after SORTABLE, as in Redis") -- so it is emitted here,
+     * immediately after the SORTABLE token, and only when 'sortable' is
+     * also true. VECTOR fields accept SORTABLE for RediSearch-client
+     * compatibility (it has no effect) but never UNF; the PHP builder
+     * (FtVectorField) has no unf() method, so 'unf' never appears
+     * alongside a VECTOR schema entry in practice. */
     if ((z = ft_find(field, "sortable")) && zend_is_true(z)) {
         FT_BUF_LIT(buf, "SORTABLE");
+        if ((z = ft_find(field, "unf")) && zend_is_true(z)) {
+            FT_BUF_LIT(buf, "UNF");
+        }
     }
 
     return 1;
@@ -450,6 +550,22 @@ static void ft_build_create_options(ft_arg_buf_t* buf, HashTable* opts) {
     if ((z = ft_find(opts, "PUNCTUATION")) && Z_TYPE_P(z) == IS_STRING) {
         FT_BUF_LIT(buf, "PUNCTUATION");
         ft_buf_add(buf, Z_STRVAL_P(z), Z_STRLEN_P(z));
+    }
+
+    /* FILTER, SCORE_FIELD, NOHL (valkey-search 1.3.0,
+     * src/commands/ft_create_parser.cc). */
+    if ((z = ft_find(opts, "FILTER")) && Z_TYPE_P(z) == IS_STRING) {
+        FT_BUF_LIT(buf, "FILTER");
+        ft_buf_add(buf, Z_STRVAL_P(z), Z_STRLEN_P(z));
+    }
+
+    if ((z = ft_find(opts, "SCORE_FIELD")) && Z_TYPE_P(z) == IS_STRING) {
+        FT_BUF_LIT(buf, "SCORE_FIELD");
+        ft_buf_add(buf, Z_STRVAL_P(z), Z_STRLEN_P(z));
+    }
+
+    if ((z = ft_find(opts, "NOHL")) && zend_is_true(z)) {
+        FT_BUF_LIT(buf, "NOHL");
     }
 }
 
@@ -834,7 +950,7 @@ int build_ft_info_args(const char*   index_name,
  *     'dialect'      => ?int,
  *   ]
  *
- * Param reference by type (port rule, D25/wave-3 brief): whether a VSIM
+ * Param reference by type (port rule): whether a VSIM
  * vector value is a "$name" reference or raw vector bytes is decided
  * ENTIRELY by 'isParamRef', which FtHybridBuilder::vsim() sets based on
  * WHICH of its two mutually exclusive parameters the caller passed
